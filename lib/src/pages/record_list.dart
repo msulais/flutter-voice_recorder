@@ -23,7 +23,7 @@ class RecordListPage extends StatefulWidget {
 
 class _RecordListPageState extends State<RecordListPage> {
 
-  final FlutterSoundPlayer _soundPlayer = FlutterSoundPlayer();
+  final FlutterSoundPlayer _player = FlutterSoundPlayer();
   final TextEditingController _text1 = TextEditingController();
   final ScrollController _listViewScroll = ScrollController();
   StreamSubscription? _playerSubscription;
@@ -37,7 +37,7 @@ class _RecordListPageState extends State<RecordListPage> {
 
 
 
-  Future<void> _renameRecord(RecordItem recordItem) async {
+  Future<void> _renamePlayer(RecordItem recordItem) async {
     String message = '';
 
     _text1.text = recordItem.fileName.substring(0, recordItem.fileName.indexOf(ext[recordItem.codec.index]));
@@ -142,18 +142,21 @@ class _RecordListPageState extends State<RecordListPage> {
 
 
 
-  Future<void> _playRecord(RecordItem recordItem) async {
+  Future<void> _playPlayer(RecordItem recordItem) async {
 
 
-    if (!await _soundPlayer.isDecoderSupported(recordItem.codec)){
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('This player doesn\'t support "${codecToString(recordItem.codec)}" codec.')));
+    if (!await _player.isDecoderSupported(recordItem.codec)){
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('This audio player doesn\'t support "${codecToString(recordItem.codec)}" codec.')));
       return;
     }
 
     await _playerSubscription?.cancel();
+    if (_player.isPlaying){
+      await _player.stopPlayer();
+    }
 
     try {
-      await _soundPlayer.startPlayer(
+      await _player.startPlayer(
         fromURI: recordItem.path, 
         whenFinished: (){
           _playerSubscription?.cancel();
@@ -172,7 +175,7 @@ class _RecordListPageState extends State<RecordListPage> {
       _isPaused = false;
     });
 
-    _playerSubscription = _soundPlayer.onProgress!.listen((event) {
+    _playerSubscription = _player.onProgress!.listen((event) {
       setState(() {
         _sliderPosition = event.position.inMilliseconds.toDouble();
         if (_sliderPosition > recordItem.duration.inMilliseconds.toDouble()){
@@ -188,17 +191,17 @@ class _RecordListPageState extends State<RecordListPage> {
     setState(() {
       _sliderPosition = milliseconds.toDouble();
     });
-    await _soundPlayer.seekToPlayer(Duration(milliseconds: milliseconds));
-    if (_soundPlayer.isPlaying){
-      await _soundPlayer.pausePlayer();
+    await _player.seekToPlayer(Duration(milliseconds: milliseconds));
+    if (_player.isPlaying){
+      await _player.pausePlayer();
     }
   }
 
 
 
-  Future<void> _pauseRecord() async {
-    if (_soundPlayer.isPlaying){
-      await _soundPlayer.pausePlayer();
+  Future<void> _pausePlayer() async {
+    if (_player.isPlaying){
+      await _player.pausePlayer();
       setState(() {
         _isPaused = true;
       });
@@ -207,9 +210,9 @@ class _RecordListPageState extends State<RecordListPage> {
 
 
 
-  Future<void> _resumeRecord() async {
-    if (_soundPlayer.isPaused){
-      await _soundPlayer.resumePlayer();
+  Future<void> _resumePlayer() async {
+    if (_player.isPaused){
+      await _player.resumePlayer();
       setState(() {
         _isPaused = false;
       });
@@ -218,7 +221,7 @@ class _RecordListPageState extends State<RecordListPage> {
 
 
 
-  Future<void> _deleteRecord(List<RecordItem> files) async {
+  Future<void> _deletePlayer(List<RecordItem> files) async {
     bool? isDelete = await showDialog(
       context: context, 
       builder: (context) => AlertDialog(
@@ -239,17 +242,25 @@ class _RecordListPageState extends State<RecordListPage> {
 
     if (isDelete != true) return;
 
+    if (_player.isPlaying) await _player.stopPlayer();
+    await _playerSubscription?.cancel();
+
     for (var file in files){
       widget.settings.removeRecordList(file);
       await File(file.path).delete(recursive: true);
     }
+
+    setState((){
+      _selectedIndex.clear();
+      _isEditMode = false;
+    });
 
     if (widget.settings.recordList.isEmpty && mounted) Navigator.pop(context);
   }
 
 
 
-  Future<void> _shareRecord(List<String> filesPath) async {
+  Future<void> _sharePlayer(List<String> filesPath) async {
     await Share.shareFiles(filesPath);
   }
 
@@ -288,6 +299,8 @@ class _RecordListPageState extends State<RecordListPage> {
           );
         }
 
+        Widget divider = const Divider(endIndent: 16, indent: 16);
+
         DateTime date = recordItem.dateCreated;
         String month = '';
 
@@ -307,6 +320,7 @@ class _RecordListPageState extends State<RecordListPage> {
         }
 
         String dateCreated = '$month ${date.day}, ${date.year}, ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
+
 
         return Container(
           constraints: BoxConstraints(
@@ -329,39 +343,32 @@ class _RecordListPageState extends State<RecordListPage> {
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
                   title('Title:'), 
                   subtitle(recordItem.fileName), 
-            
-                  const Divider(endIndent: 16, indent: 16),
-            
+                  divider,
+
                   title('Path:'), 
                   subtitle(recordItem.path), 
-            
-                  const Divider(endIndent: 16, indent: 16),
-            
+                  divider,
+
                   title('Size:'), 
                   subtitle(size), 
-                  
-                  const Divider(endIndent: 16, indent: 16),
-            
+                  divider,
+
                   title('Length:'), 
                   subtitle(recordItem.duration.toString().substring(0, recordItem.duration.toString().indexOf('.'))), 
-                  
-                  const Divider(endIndent: 16, indent: 16),
-            
+                  divider,
+
                   title('Codec:'), 
                   subtitle(recordItem.getCodec), 
-            
-                  const Divider(endIndent: 16, indent: 16),
-            
+                  divider,
+
                   title('Bit rate:'), 
                   subtitle('${recordItem.bitRate} Hz'), 
-            
-                  const Divider(endIndent: 16, indent: 16),
-            
+                  divider,
+
                   title('Sample rate:'), 
                   subtitle('${recordItem.sampleRate} Hz'),
-            
-                  const Divider(endIndent: 16, indent: 16),
-            
+                  divider,
+
                   title('Date created:'), 
                   subtitle(dateCreated), 
             
@@ -377,7 +384,7 @@ class _RecordListPageState extends State<RecordListPage> {
 
 
 
-  void _selectRecord(int index){
+  void _selectPlayer(int index){
     setState((){
       if (_selectedIndex.contains(index)){
         _selectedIndex.remove(index);
@@ -423,7 +430,7 @@ class _RecordListPageState extends State<RecordListPage> {
 
 
 
-  void _selectAllRecord(){
+  void _selectAllPlayer(){
     _selectedIndex.clear();
     setState(() {
       _selectedIndex = [for (int i = 0; i < widget.settings.recordList.length; i++) i];
@@ -435,8 +442,8 @@ class _RecordListPageState extends State<RecordListPage> {
   @override
   void initState(){
     super.initState();
-    _soundPlayer.openPlayer().then((value) async {
-      await _soundPlayer.setSubscriptionDuration(const Duration(milliseconds: 10));
+    _player.openPlayer().then((value) async {
+      await _player.setSubscriptionDuration(const Duration(milliseconds: 10));
     });
   }
 
@@ -444,7 +451,7 @@ class _RecordListPageState extends State<RecordListPage> {
 
   @override
   void dispose(){
-    _soundPlayer.closePlayer();
+    _player.closePlayer();
     _playerSubscription?.cancel();
     _text1.dispose();
     _listViewScroll.dispose();
@@ -455,6 +462,8 @@ class _RecordListPageState extends State<RecordListPage> {
 
   @override
   Widget build(BuildContext context) {
+
+    bool darkMode = Theme.of(context).brightness == Brightness.dark;
 
     PreferredSizeWidget appBar = PreferredSize(
       preferredSize: const Size.fromHeight(50),
@@ -489,9 +498,9 @@ class _RecordListPageState extends State<RecordListPage> {
             ];
 
             List<VoidCallback> onPressed = [
-              if (!isSameLength) () => _selectAllRecord(), 
-              () => _shareRecord([for(int i in _selectedIndex) RecordItem.parse(widget.settings.recordList[i]).path]), 
-              () => _deleteRecord([for(int i in _selectedIndex) RecordItem.parse(widget.settings.recordList[i])]), 
+              if (!isSameLength) () => _selectAllPlayer(), 
+              () => _sharePlayer([for(int i in _selectedIndex) RecordItem.parse(widget.settings.recordList[i]).path]), 
+              () => _deletePlayer([for(int i in _selectedIndex) RecordItem.parse(widget.settings.recordList[i])]), 
             ];
 
             return IconButton(
@@ -553,17 +562,17 @@ class _RecordListPageState extends State<RecordListPage> {
                   recordItem.fileName, 
                   overflow: TextOverflow.ellipsis,
                 ),
-                onTap: () {
+                onTap: () async  {
                   if (_isEditMode){
-                    _selectRecord(index);
+                    _selectPlayer(index);
                     return;
                   }
     
-                  if (_soundPlayer.isPlaying){
-                    _soundPlayer.stopPlayer();
+                  if (_player.isPlaying){
+                    await _player.stopPlayer();
                   }
     
-                  _playerSubscription?.cancel();
+                  await _playerSubscription?.cancel();
                   setState(() {
                     _expandedIndex = _expandedIndex == index? null : index;
                     _sliderPosition = 0;
@@ -571,7 +580,7 @@ class _RecordListPageState extends State<RecordListPage> {
                   });
 
                   if (index == widget.settings.recordList.length - 1 && _listViewScroll.hasClients){
-                    Future.delayed(const Duration(milliseconds: 500), (){
+                    Future.delayed(const Duration(milliseconds: 200), (){
                       _listViewScroll.animateTo(
                         _listViewScroll.position.maxScrollExtent, 
                         duration: const Duration(milliseconds: 200), 
@@ -580,13 +589,13 @@ class _RecordListPageState extends State<RecordListPage> {
                     });
                   }
                 },
-                onLongPress: (){
+                onLongPress: () async {
     
-                  if (_soundPlayer.isPlaying){
-                    _soundPlayer.stopPlayer();
+                  if (_player.isPlaying){
+                    await _player.stopPlayer();
                   }
     
-                  _playerSubscription?.cancel();
+                  await _playerSubscription?.cancel();
     
                   setState((){
                     _sliderPosition = 0;
@@ -595,7 +604,7 @@ class _RecordListPageState extends State<RecordListPage> {
                     _expandedIndex = null;
                   });
     
-                  _selectRecord(index);
+                  _selectPlayer(index);
                 },
                 selected: _selectedIndex.contains(index),
                 subtitle: Text(durationText),
@@ -626,12 +635,12 @@ class _RecordListPageState extends State<RecordListPage> {
                         List<VoidCallback> onPressed = [
                           _isPaused
                             ? _sliderPosition == 0
-                              ? () => _playRecord(recordItem)
-                              : () => _resumeRecord()
-                            : () => _pauseRecord(),
-                          () => _shareRecord([filePath]), 
-                          () => _deleteRecord([recordItem]), 
-                          () => _renameRecord(recordItem),
+                              ? () => _playPlayer(recordItem)
+                              : () => _resumePlayer()
+                            : () => _pausePlayer(),
+                          () => _sharePlayer([filePath]), 
+                          () => _deletePlayer([recordItem]), 
+                          () => _renamePlayer(recordItem),
                           () => _showDetail(recordItem)
                         ];
                         
@@ -649,11 +658,11 @@ class _RecordListPageState extends State<RecordListPage> {
                           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 16),
                           child: Tooltip(
                             message: tooltip[index2],
-                            child: ElevatedButton(
+                            child: 
+                            OutlinedButton(
                               onPressed: onPressed[index2],
-                              style: ElevatedButton.styleFrom(
-                                onPrimary: Colors.red[900],
-                                primary: Colors.red[100],
+                              style: OutlinedButton.styleFrom(
+                                primary: Colors.red[darkMode? 300 : 500],
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(100)),
                                 minimumSize: const Size(60, 60)
                               ),
@@ -665,13 +674,13 @@ class _RecordListPageState extends State<RecordListPage> {
                       })),
                     ),
                     AnimatedCrossFade(
-                      duration: const Duration(milliseconds: 250),
+                      duration: const Duration(milliseconds: 200),
                       crossFadeState: _sliderPosition > 0 || !_isPaused ? CrossFadeState.showFirst : CrossFadeState.showSecond ,
                       secondChild: Container(),
                       firstChild: Listener(
                         onPointerUp: (event) async {
-                          if (_soundPlayer.isPaused && !_isPaused){
-                            await _soundPlayer.resumePlayer();
+                          if (_player.isPaused && !_isPaused){
+                            await _player.resumePlayer();
                           }
                         } ,
                         child: Column(
@@ -696,7 +705,7 @@ class _RecordListPageState extends State<RecordListPage> {
                 ),
                 secondChild: Container(),
                 crossFadeState: index == _expandedIndex? CrossFadeState.showFirst : CrossFadeState.showSecond,
-                duration: const Duration(milliseconds: 250),
+                duration: const Duration(milliseconds: 200),
               ),
               
             ]);

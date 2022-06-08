@@ -2,8 +2,9 @@ import 'dart:async' show StreamSubscription;
 import 'dart:io';
 
 import 'package:audio_session/audio_session.dart';
+import 'package:awesome_notifications/awesome_notifications.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_background_service/flutter_background_service.dart';
+// import 'package:flutter_background/flutter_background.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -25,20 +26,22 @@ class RecordPage extends StatefulWidget {
 
 class _RecordPageState extends State<RecordPage> {
 
-  bool _isRecording = false;
+  bool 
+    _isRecording = false, 
+    _isNotificationAllowed = false
+  ;
   Duration _duration = const Duration();
   StreamSubscription? _recorderSubscription;
   double _decibel = 0;
   final TextEditingController _text1 = TextEditingController();
-  final FlutterSoundRecorder _audioRecorder = FlutterSoundRecorder();
+  final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
 
 
 
   Future<void> _initAudio() async {
 
-    // recorder
-    await _audioRecorder.openRecorder();
-    await _audioRecorder.setSubscriptionDuration(const Duration(milliseconds: 10));
+    await _recorder.openRecorder();
+    await _recorder.setSubscriptionDuration(const Duration(milliseconds: 50));
 
     final session = await AudioSession.instance;
     await session.configure(AudioSessionConfiguration(
@@ -60,7 +63,6 @@ class _RecordPageState extends State<RecordPage> {
 
 
   Future<void> _startOrPauseRecording() async {
-    final service = FlutterBackgroundService();
 
     // pause recorder
     if (_isRecording){
@@ -80,12 +82,9 @@ class _RecordPageState extends State<RecordPage> {
 
     // start recorder
     if (_duration.inMilliseconds == 0){
-      await service.startService();
       bool success = await _startRecorder();
-      if (!success) {
-        service.invoke('stop');
-        return;
-      }
+      if (!success) return;
+
     // resume recorder
     } else {
       await _resumeRecorder();
@@ -97,33 +96,58 @@ class _RecordPageState extends State<RecordPage> {
 
 
   Future<bool> _startRecorder() async {
-    if (!await _audioRecorder.isEncoderSupported(widget.settings.codec)){
+
+    // Background prosses enabled
+    // bool success = await FlutterBackground.initialize();
+    // if (success && await FlutterBackground.hasPermissions){
+    //   await FlutterBackground.enableBackgroundExecution();
+    // }
+
+    // notification handle
+    _isNotificationAllowed = await AwesomeNotifications().isNotificationAllowed();
+    if (!_isNotificationAllowed) _isNotificationAllowed = await AwesomeNotifications().requestPermissionToSendNotifications();
+
+    // is recorder support with codec?
+    if (!await _recorder.isEncoderSupported(widget.settings.codec) && mounted){
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('This recorder doesn\'t support "${codecToString(widget.settings.codec)}" codec.')));
       return false;
     }
 
+    // start recorder
     try {
       Directory doc = await getApplicationDocumentsDirectory();
-      await _audioRecorder.startRecorder(
+      await _recorder.startRecorder(
         toFile: '${doc.path}${Platform.pathSeparator}cache_file${ext[widget.settings.codec.index]}', 
         codec: widget.settings.codec, 
         bitRate: widget.settings.bitRate, 
         sampleRate: widget.settings.sampleRate
       );
     } catch (e){
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('[ERROR] Can\'t start recorder')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('[ERROR] Can\'t start recorder')));
       return false;
     }
 
+    // show notification
+    if (_isNotificationAllowed){
+      AwesomeNotifications().createNotification(
+        content: NotificationContent(
+          id: 1,
+          channelKey: 'kubus.voice_recorder.key',
+          title: 'Voice recorder',
+          body: 'Recording ...', 
+          locked: true,
+          displayOnBackground: true, 
+          displayOnForeground: true
+        )
+      );
+    }
 
-    _recorderSubscription = _audioRecorder.onProgress!.listen((event) {
+    // listening decibels and duration of recorder
+    _recorderSubscription = _recorder.onProgress!.listen((event) {
       setState(() {
         _duration = _duration + const Duration(milliseconds: 10);
+        if (_duration < event.duration) _duration = event.duration; 
         _decibel = event.decibels == 0? _decibel : event.decibels ?? _decibel;
-      });
-      FlutterBackgroundService().invoke('updateDuration', {
-        'title': 'Recording', 
-        'duration': '${_duration.inHours == 0? '' : '${_duration.inHours}:'}${(_duration.inMinutes % 60).toString().padLeft(_duration.inHours == 0? 1 : 2, '0')}:${(_duration.inSeconds % 60).toString().padLeft(2, '0')}'
       });
     });
 
@@ -134,39 +158,57 @@ class _RecordPageState extends State<RecordPage> {
 
 
   Future<void> _resumeRecorder() async {
-    if (_audioRecorder.isPaused){
-      _recorderSubscription?.resume();
-      await _audioRecorder.resumeRecorder();
+    if (!_recorder.isPaused) return;
+    
+    _recorderSubscription?.resume();
+    await _recorder.resumeRecorder();
+
+    if (_isNotificationAllowed){
+      AwesomeNotifications().createNotification(
+        content: NotificationContent(
+          id: 1,
+          channelKey: 'kubus.voice_recorder.key',
+          title: 'Voice recorder',
+          body: 'Recording ...', 
+          locked: true,
+          displayOnBackground: true, 
+          displayOnForeground: true
+        )
+      );
     }
   }
 
 
 
   Future<void> _pauseRecorder() async {
-    if (_audioRecorder.isRecording){
-      _recorderSubscription?.pause();
-      await _audioRecorder.pauseRecorder();
-      print('HERE-' * 10);
-      FlutterBackgroundService().invoke('updateDuration', {
-        'title': 'Paused', 
-        'duration': '${_duration.inHours == 0? '' : '${_duration.inHours}:'}${(_duration.inMinutes % 60).toString().padLeft(_duration.inHours == 0? 1 : 2, '0')}:${(_duration.inSeconds % 60).toString().padLeft(2, '0')}'
-      });
+    if (!_recorder.isRecording) return;
+
+    _recorderSubscription?.pause();
+    await _recorder.pauseRecorder();
+    if (_isNotificationAllowed){
+      AwesomeNotifications().createNotification(
+        content: NotificationContent(
+          id: 1,
+          channelKey: 'kubus.voice_recorder.key',
+          title: 'Voice recorder',
+          body: 'Paused', 
+          locked: true,
+          displayOnBackground: true, 
+          displayOnForeground: true
+        )
+      );
     }
   }
 
 
 
   Future<void> _stopRecorder() async {
-    await _recorderSubscription?.cancel();
-    await _audioRecorder.stopRecorder() ?? '';
 
-    // if ((url == null || url.isEmpty) && mounted){
-    //   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cache file not found, try another codec.')));
-    //   setState((){
-    //     _duration = const Duration();
-    //     _decibel = 0;
-    //   });
-    //   return;
+    await AwesomeNotifications().cancelAll();
+    await _recorderSubscription?.cancel();
+    await _recorder.stopRecorder();
+    // if (FlutterBackground.isBackgroundExecutionEnabled) {
+    //   await FlutterBackground.disableBackgroundExecution();
     // }
 
     await _saveOrDeleteRecord();
@@ -175,8 +217,6 @@ class _RecordPageState extends State<RecordPage> {
       _duration = const Duration();
       _decibel = 0;
     });
-
-    FlutterBackgroundService().invoke('stop');
   }
 
 
@@ -195,6 +235,8 @@ class _RecordPageState extends State<RecordPage> {
 
     final now = DateTime.now();
     String p(int value, [int width = 2]) => value.toString().padLeft(width, '0');
+
+    // default file name
     _text1.text = 'VR_${p(now.year, 4)}${p(now.month)}${p(now.day)}_${p(now.hour)}${p(now.minute)}${p(now.second)}';
 
     bool? isSave = await showModalBottomSheet(
@@ -207,9 +249,7 @@ class _RecordPageState extends State<RecordPage> {
         child: StatefulBuilder(
           builder: (context, setState) {
             return Column(mainAxisSize: MainAxisSize.min, children: [
-        
               const SizedBox(height: 16.0),
-              
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16.0),
                 child: TextField(
@@ -228,18 +268,13 @@ class _RecordPageState extends State<RecordPage> {
                   maxLines: 1,
                 ),
               ), 
-        
               const SizedBox(height: 8),
-        
               Row(children: [
-        
                 const Spacer(), 
-        
                 TextButton(
                   onPressed: () => Navigator.pop(context), 
                   child: const Text('DELETE'),
                 ),
-        
                 TextButton(
                   onPressed: () async {
                     RegExp checkFileNameRegex = RegExp(r'^[\w,\s-_\.]+$');
@@ -266,18 +301,15 @@ class _RecordPageState extends State<RecordPage> {
                   },
                   child: const Text('SAVE')
                 ),
-        
                 const SizedBox(width: 8),
-        
               ]), 
-        
               const SizedBox(height: 8),
-              
             ]);
           }
         ),
       )
     );
+
     Directory doc = await getApplicationDocumentsDirectory();
     String cacheFilePath = '${doc.path}${Platform.pathSeparator}cache_file${ext[widget.settings.codec.index]}';
 
@@ -289,17 +321,16 @@ class _RecordPageState extends State<RecordPage> {
       await File(cacheFilePath).rename(newPath);
 
       widget.settings.addRecordList(RecordItem(
-        path: newPath, 
-        codec: widget.settings.codec, 
-        duration: _duration, 
+        path       : newPath, 
+        codec      : widget.settings.codec, 
+        duration   : _duration, 
         dateCreated: DateTime.now(), 
-        bitRate: widget.settings.bitRate, 
-        sampleRate: widget.settings.sampleRate
+        bitRate    : widget.settings.bitRate, 
+        sampleRate : widget.settings.sampleRate
       ).toString());
       
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('File saved to "${doc.path}${Platform.pathSeparator}${_text1.text}${ext[widget.settings.codec.index]}"')));
       return;
-
     }
 
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Deleted')));
@@ -314,15 +345,20 @@ class _RecordPageState extends State<RecordPage> {
   void initState(){
     super.initState();
     _initAudio();
+    AwesomeNotifications().actionStream.listen((ReceivedNotification notification){});
   }
 
 
 
   @override
-  void dispose(){
+  void dispose() {
     _text1.dispose();
-    _audioRecorder.stopRecorder();
+    _recorder.stopRecorder();
     _recorderSubscription?.cancel();
+    AwesomeNotifications().dispose();
+    // if (FlutterBackground.isBackgroundExecutionEnabled) {
+    //   await FlutterBackground.disableBackgroundExecution();
+    // }
     super.dispose();
   }
 
@@ -337,93 +373,95 @@ class _RecordPageState extends State<RecordPage> {
     String minute = '${_duration.inMinutes % 60}'.padLeft(hour.isNotEmpty? 2 : 1, '0');
     String seconds = '${_duration.inSeconds % 60}'.padLeft(2, '0');
 
-    return Scaffold(
-      body: SafeArea(child: SizedBox.expand(child: Column(
-        children: [
+    Widget bottomAppBar = Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
 
-          Expanded(child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text('${hour.isNotEmpty? '$hour:' : ''}$minute:$seconds', style: const TextStyle(fontSize: 72)),
-              if (_isRecording || _duration.inMilliseconds != 0) Text(_isRecording? 'Recording' : 'Paused', style: const TextStyle(fontSize: 18))
-            ],
-          )), 
-
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-
-              if (!_isRecording && _duration.inMilliseconds == 0) Expanded(
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: IconButton(
-                    onPressed: () async {
-                      await Navigator.push(
-                        context, 
-                        MaterialPageRoute(builder: (context) => SettingsPage(settings: widget.settings))
-                      );
-                      setState(() {});
-                    }, 
-                    icon: const Icon(Icons.settings_outlined), 
-                    iconSize: 28,
-                  ),
-                ),
-              ) else const Spacer(),
-
-              const SizedBox(width: 16),
-
-              ElevatedButton(
-                onPressed: () => _startOrPauseRecording(),
-                style: ElevatedButton.styleFrom(
-                  fixedSize:  const Size(150, 70)
-                ), 
-                child: Icon(_isRecording
-                  ? Icons.pause_rounded 
-                  : Icons.play_arrow_rounded,
-                  size: 40
-                )
-              ),
-
-              const SizedBox(width: 16),
-
-              if (!_isRecording && (_duration.inMilliseconds != 0 || widget.settings.recordList.isNotEmpty)) Expanded(
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: IconButton(
-                    onPressed: (){
-                      // show record list
-                      if (_duration.inMilliseconds == 0){
-                        _showRecordList();
-                        return;
-                      }
-                      _stopRecorder();
-                    }, 
-                    icon: Icon(_duration.inMilliseconds == 0
-                      ? Icons.queue_music 
-                      : Icons.square_outlined,
-                    ), 
-                    iconSize: 28,
-                  ),
-                ),
-              ) else const Spacer(),
-
-            ]
-          ),
-
-          const SizedBox(height: 16.0),
-
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 10), 
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(100), 
-              color: Colors.red
+        if (!_isRecording && _duration.inMilliseconds == 0) Expanded(
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: IconButton(
+              onPressed: () async {
+                await Navigator.push(
+                  context, 
+                  MaterialPageRoute(builder: (context) => SettingsPage(settings: widget.settings))
+                );
+                setState(() {});
+              }, 
+              icon: const Icon(Icons.settings_outlined), 
+              iconSize: 28,
             ),
-            width: _decibel.abs() / 120 * (MediaQuery.of(context).size.width - 32) ,
-            height: 8,
           ),
+        ) else const Spacer(),
 
-        ]
-      )))
+        const SizedBox(width: 16),
+
+        ElevatedButton(
+          onPressed: () => _startOrPauseRecording(),
+          style: ElevatedButton.styleFrom(
+            fixedSize:  const Size(150, 70)
+          ), 
+          child: Icon(_isRecording
+            ? Icons.pause_rounded 
+            : Icons.play_arrow_rounded,
+            size: 40
+          )
+        ),
+
+        const SizedBox(width: 16),
+
+        if (!_isRecording && (_duration.inMilliseconds != 0 || widget.settings.recordList.isNotEmpty)) Expanded(
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: IconButton(
+              onPressed: (){
+                // show record list
+                if (_duration.inMilliseconds == 0){
+                  _showRecordList();
+                  return;
+                }
+                _stopRecorder();
+              }, 
+              icon: Icon(_duration.inMilliseconds == 0
+                ? Icons.queue_music 
+                : Icons.square_outlined,
+              ), 
+              iconSize: 28,
+            ),
+          ),
+        ) else const Spacer(),
+
+      ]
+    );
+
+    Widget decibelWidget = AnimatedContainer(
+      duration: const Duration(milliseconds: 50), 
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(100), 
+        color: Colors.red
+      ),
+      width: _decibel.abs() / 120 * (MediaQuery.of(context).size.width - 32) ,
+      height: 8,
+    );
+
+    return Scaffold(
+      body: SafeArea(child: SizedBox.expand(child: Column(children: [
+
+        Expanded(child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text('${hour.isNotEmpty? '$hour:' : ''}$minute:$seconds', style: const TextStyle(fontSize: 72)),
+            if (_isRecording || _duration.inMilliseconds != 0) 
+              Text(_isRecording? 'Recording' : 'Paused', style: const TextStyle(fontSize: 18))
+          ],
+        )), 
+
+        bottomAppBar,
+        const SizedBox(height: 16.0),
+        decibelWidget,
+        const SizedBox(height: 8),
+
+      ])))
     );
   }
 }

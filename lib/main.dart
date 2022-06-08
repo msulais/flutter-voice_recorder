@@ -1,9 +1,5 @@
-import 'dart:async';
-import 'dart:ui';
-
+import 'package:awesome_notifications/awesome_notifications.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_background_service/flutter_background_service.dart';
-import 'package:flutter_background_service_android/flutter_background_service_android.dart';
 import 'package:provider/provider.dart';
 import 'package:wakelock/wakelock.dart';
 
@@ -16,9 +12,22 @@ void main() async {
 
   await Wakelock.enable();
 
-  await _initBackgroundServices();
-
   var settings = Settings(); await settings.readFile();
+
+  await AwesomeNotifications().initialize(
+    'resource://drawable/app_icon',
+    [
+      NotificationChannel(
+        channelGroupKey: 'kubus.voice_recorder.group.key',
+        channelKey: 'kubus.voice_recorder.key',
+        channelName: 'Voice Recorder',
+        channelDescription: 'Notification to show status of recorder',
+        importance: NotificationImportance.Low, 
+        locked: true, 
+      )
+    ],
+    debug: true
+  );
 
   runApp(MultiProvider(
     providers: [
@@ -26,66 +35,6 @@ void main() async {
     ], 
     child: const MyApp()
   ) );
-}
-
-
-
-Future<void> _initBackgroundServices() async {
-  final service = FlutterBackgroundService();
-  await service.configure(
-
-    androidConfiguration: AndroidConfiguration(
-      onStart: onStart,
-      autoStart: false,
-      isForegroundMode: true,
-    ),
-
-    // I dont make an ios app (for now)
-    iosConfiguration: IosConfiguration(
-      autoStart: true,
-      onForeground: (service) {},
-      onBackground: (service) => false,
-    ),
-  );
-}
-
-
-
-void onStart(ServiceInstance service) async {
-
-  DartPluginRegistrant.ensureInitialized();
-
-  if (service is AndroidServiceInstance) {
-    service.on('setAsForeground').listen((event) {
-      service.setAsForegroundService();
-    });
-
-    service.on('setAsBackground').listen((event) {
-      service.setAsBackgroundService();
-    });
-
-    service.on('updateDuration').listen((event) {
-      service.setForegroundNotificationInfo(
-        title: event!['title'], 
-        content: event['duration']
-      );
-    });
-  }
-
-  service.on('stop').listen((event) {
-    service.stopSelf();
-  });
-
-  // bring to foreground
-  // Timer.periodic(const Duration(seconds: 1), (timer) async {
-
-  //   if (service is AndroidServiceInstance) {
-  //     service.setForegroundNotificationInfo(
-  //       title: "My App Service",
-  //       content: "Updated at ${DateTime.now()}",
-  //     );
-  //   }
-  // });
 }
 
 
@@ -112,7 +61,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
+  void didChangeAppLifecycleState(AppLifecycleState state) async {
     switch (state){
       case AppLifecycleState.resumed:
         setState((){});
@@ -122,6 +71,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       case AppLifecycleState.paused:
         break;
       case AppLifecycleState.detached:
+        await AwesomeNotifications().cancelAll();
         break;
     }
   }
